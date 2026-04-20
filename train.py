@@ -4,8 +4,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
+import torchvision.models as models
 from PIL import Image
 from tqdm import tqdm
+
 from models.airnet_lite import AirNetLite
 
 # --- 1. PYTORCH DATALOADER ---
@@ -53,12 +55,53 @@ class EarlyStopping:
             self.best_weights = model.state_dict()
             self.counter = 0
 
-# --- 3. TRAINING LOOP ---
+# --- 3. VGG PERCEPTUAL LOSS ---
+class VGGPerceptualLoss(nn.Module):
+    def __init__(self, resize=True):
+        super(VGGPerceptualLoss, self).__init__()
+        # Extract features from multiple depths of a pre-trained VGG16
+        blocks = []
+        vgg_features = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).features
+        blocks.append(vgg_features[:4].eval())
+        blocks.append(vgg_features[4:9].eval())
+        blocks.append(vgg_features[9:16].eval())
+        blocks.append(vgg_features[16:23].eval())
+        
+        # Freeze VGG parameters so we don't accidentally train it
+        for bl in blocks:
+            for p in bl.parameters():
+                p.requires_grad = False
+                
+        self.blocks = nn.ModuleList(blocks)
+        
+        # ImageNet normalization statistics required by VGG
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.resize = resize
+
+    def forward(self, input, target):
+        input = (input - self.mean) / self.std
+        target = (target - self.mean) / self.std
+        
+        if self.resize:
+            input = nn.functional.interpolate(input, mode='bilinear', size=(224, 224), align_corners=False)
+            target = nn.functional.interpolate(target, mode='bilinear', size=(224, 224), align_corners=False)
+            
+        loss = 0.0
+        x, y = input, target
+        for block in self.blocks:
+            x = block(x)
+            y = block(y)
+            loss += nn.functional.mse_loss(x, y)
+            
+        return loss
+
+# --- 4. TRAINING LOOP ---
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Booting Self-Monitoring AirNet-Lite on {device}...")
+    print(f"Booting Perceptual AirNet-Lite on {device}...")
 
-    # Loaders: Notice we now extract 4 patches per image to artificially 4x the dataset size!
+    # Artificially 4x the dataset size via patches
     train_dataset = torch.utils.data.ConcatDataset([
         MixedDataset("data/train_mixed_degraded", "data/DIV2K_train_HR", patch_size=256) 
         for _ in range(4) 
@@ -69,11 +112,15 @@ def train():
     val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False, num_workers=4)
 
     model = AirNetLite().to(device)
-    criterion = nn.L1Loss()
-    optimizer = optim.AdamW(model.parameters(), lr=2e-4)
     
+    # Instantiate Compound Loss
+    criterion_l1 = nn.L1Loss().to(device)
+    criterion_vgg = VGGPerceptualLoss().to(device)
+    
+    optimizer = optim.AdamW(model.parameters(), lr=2e-4)
     early_stopper = EarlyStopping(patience=7)
-    epochs = 100 # Set high safely; Early Stopping will catch it
+    
+    epochs = 100
     os.makedirs("weights", exist_ok=True)
 
     for epoch in range(epochs):
@@ -87,12 +134,19 @@ def train():
             optimizer.zero_grad()
             
             restored = model(deg)
-            loss = criterion(restored, clean)
+            
+            # Calculate Structural (L1) and Texture (VGG) Losses
+            loss_l1 = criterion_l1(restored, clean)
+            loss_vgg = criterion_vgg(restored, clean)
+            
+            # Combine: 1.0 weight for structure, 0.1 weight for perceptual texture hallucination
+            loss = loss_l1 + (0.1 * loss_vgg)
+            
             loss.backward()
             optimizer.step()
             
             train_loss += loss.item()
-            pbar.set_postfix(loss=loss.item())
+            pbar.set_postfix(total_loss=loss.item(), l1=loss_l1.item(), vgg=loss_vgg.item())
             
         avg_train_loss = train_loss / len(train_loader)
 
@@ -103,10 +157,13 @@ def train():
             for deg, clean in val_loader:
                 deg, clean = deg.to(device), clean.to(device)
                 restored = model(deg)
-                val_loss += criterion(restored, clean).item()
+                
+                v_l1 = criterion_l1(restored, clean)
+                v_vgg = criterion_vgg(restored, clean)
+                val_loss += (v_l1 + (0.1 * v_vgg)).item()
                 
         avg_val_loss = val_loss / len(val_loader)
-        print(f"\nEpoch {epoch+1} Summary -> Train L1: {avg_train_loss:.4f} | Val L1: {avg_val_loss:.4f}")
+        print(f"\nEpoch {epoch+1} Summary -> Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
         # --- EARLY STOPPING CHECK ---
         early_stopper(avg_val_loss, model)

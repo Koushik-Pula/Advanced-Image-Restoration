@@ -40,7 +40,7 @@ def run_inference(input_path, output_path, weights_path):
 if __name__ == "__main__":
     # Pointing to an unseen image from the validation set
     # IN_IMG = os.path.join("data", "val_degraded", os.listdir("data/val_degraded")[0])
-    IN_IMG = os.path.join("data","degraded.png")
+    IN_IMG = os.path.join("data","deg2.jpeg")
     OUT_IMG = "data/restored_comparison.png"
     WEIGHTS = "weights/airnet_lite_best.pth"
     
