@@ -22,24 +22,22 @@ def generate_comparison_grid(degraded_dir, clean_dir, weights_path, output_path,
     
     to_tensor = transforms.ToTensor()
     
-    # Setup Matplotlib Plot
-    fig, axes = plt.subplots(num_samples, 3, figsize=(12, 4 * num_samples))
+    # Setup Matplotlib Plot (Changed from 3 columns to 2)
+    fig, axes = plt.subplots(num_samples, 2, figsize=(8, 4 * num_samples))
     plt.subplots_adjust(wspace=0.05, hspace=0.1)
     
-    # Column Titles
-    titles = ["Degraded Input (Unseen)", "AirNet-Lite Restoration", "Clean Ground Truth"]
-    for j in range(3):
+    # Column Titles (Updated for 2-column layout)
+    titles = ["Degraded Input (Unseen)", "AirNet-Lite Restoration"]
+    for j in range(2):
         axes[0, j].set_title(titles[j], fontsize=14, fontweight='bold', pad=10)
 
     with torch.no_grad():
         for i, file_name in enumerate(sample_files):
             # Load images
             deg_img = Image.open(os.path.join(degraded_dir, file_name)).convert('RGB')
-            clean_img = Image.open(os.path.join(clean_dir, file_name)).convert('RGB')
 
             # Crop to 256x256 so the grid looks uniform
             deg_patch = transforms.functional.center_crop(deg_img, (256, 256))
-            clean_patch = transforms.functional.center_crop(clean_img, (256, 256))
 
             # Run Inference
             img_tensor = to_tensor(deg_patch).unsqueeze(0).to(device)
@@ -47,9 +45,9 @@ def generate_comparison_grid(degraded_dir, clean_dir, weights_path, output_path,
             
             restored_img = transforms.ToPILImage()(restored_tensor)
 
-            # Plot row
-            images = [deg_patch, restored_img, clean_patch]
-            for j in range(3):
+            # Plot row (Changed to 2 images)
+            images = [deg_patch, restored_img]
+            for j in range(2):
                 axes[i, j].imshow(images[j])
                 axes[i, j].axis('off')
 
@@ -63,6 +61,6 @@ if __name__ == "__main__":
         degraded_dir="data/val_degraded",
         clean_dir="data/val_clean",
         weights_path="weights/airnet_lite_best.pth",
-        output_path="data/presentation_grid.png",
+        output_path="data/presentation_grid_no_gt.png",
         num_samples=4
     )
