@@ -1,0 +1,18 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+env/
+.env
+
+# Project specific ignores (CRITICAL)
+data/
+weights/
+*.pth
+
+# OS generated files
+.DS_Store
+Thumbs.db
