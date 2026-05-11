@@ -1,6 +1,6 @@
-========================================================================
+
 PROJECT: Autonomous Multi-Degradation Image Restoration (AirNet-Lite)
-AUTHOR: Koushik
+
 ========================================================================
 
 1. OVERVIEW
